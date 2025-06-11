@@ -1,8 +1,9 @@
-from django.shortcuts import render, redirect
-from .forms import RegistrationForm
+from django.shortcuts import render, redirect, get_object_or_404
+from .forms import RegistrationForm, UserForm, UserProfileForm
 from django.http import HttpResponse
-from .models import accounts
+from .models import accounts, UserProfile
 from django.contrib import messages, auth
+from orders.models import Order, OrderProduct
 from django.contrib.auth.decorators import login_required
 
 # Email verification imports
@@ -12,6 +13,9 @@ from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import EmailMessage
+
+from carts.models import Cart, CartItem
+from carts.views import _cart_id
 
 def register(request):
     if request.method == 'POST':
@@ -64,11 +68,55 @@ def login(request):
         user = auth.authenticate(email=email, password=password)
         
         if user is not None:
+            try:
+                # Get anonymous cart (from session)
+                cart = Cart.objects.get(cart_id=_cart_id(request))
+                cart_items = CartItem.objects.filter(cart=cart)
+                
+                if cart_items.exists():
+                    # Get logged-in user's cart items
+                    user_cart_items = CartItem.objects.filter(user=user)
+
+                    # Make a list of existing variations of user cart items
+                    ex_var_list = []
+                    id_list = []
+                    for item in user_cart_items:
+                        variation = item.variations.all()
+                        ex_var_list.append(list(variation))
+                        id_list.append(item.id)
+
+                    # Iterate through anonymous cart items
+                    for item in cart_items:
+                        variation = list(item.variations.all())
+                        if variation in ex_var_list:
+                            index = ex_var_list.index(variation)
+                            item_id = id_list[index]
+                            existing_item = CartItem.objects.get(id=item_id)
+                            existing_item.quantity += item.quantity
+                            existing_item.save()
+                            item.delete()  # remove duplicate
+                        else:
+                            item.user = user
+                            item.save()
+            except Cart.DoesNotExist:
+                pass
+
             auth.login(request, user)
             messages.success(request,'You are now logged in.')
+            url = request.META.get('HTTP_REFERER')
+            try:
+                query = request.utils.urlparse(url).query
+                
+                params = dict(x.split('=') for x in query.split('&'))
+                if 'next' in params:
+                    nextPage = params['next']
+                    return redirect(nextpage)
+                
+            except:
+                pass
             return redirect('dashboard')
         else:
-            messages.error(request, 'Invalid Login Credentials')
+            messages.error(request, 'Invalid login credentials')
             return redirect('login')
     return render(request, 'accounts/login.html')
 
@@ -138,3 +186,75 @@ def resetPassword(request):
             return redirect('resetPassword')
 
     return render(request, 'accounts/resetPassword.html')
+
+@login_required(login_url='login')
+def my_order(request):
+    orders = Order.objects.filter(user=request.user, is_ordered=True).order_by('-created_at')
+    context = {
+        'orders': orders,
+    }
+    return render(request, 'accounts/my_order.html', context)
+
+
+@login_required(login_url='login')
+def edit_profile(request):
+    userprofile = get_object_or_404(UserProfile, user=request.user)
+    if request.method == 'POST':
+        user_form = UserForm(request.POST, instance=request.user)
+        profile_form = UserProfileForm(request.POST, request.FILES, instance=userprofile)
+        if user_form.is_valid() and profile_form.is_valid():
+            user_form.save()
+            profile_form.save()
+            messages.success(request, 'Your profile has been updated.')
+            return redirect('edit_profile')
+    else:
+        user_form = UserForm(instance=request.user)
+        profile_form = UserProfileForm(instance=userprofile)
+    context = {
+        'user_form': user_form,
+        'profile_form': profile_form,
+        'userprofile': userprofile,
+    }
+    return render(request, 'accounts/edit_profile.html', context)
+
+
+@login_required(login_url='login')
+def change_password(request):
+    if request.method == 'POST':
+        current_password = request.POST['current_password']
+        new_password = request.POST['new_password']
+        confirm_password = request.POST['confirm_password']
+
+        user = accounts.objects.get(username__exact=request.user.username)
+
+        if new_password == confirm_password:
+            success = user.check_password(current_password)
+            if success:
+                user.set_password(new_password)
+                user.save()
+                # auth.logout(request)
+                messages.success(request, 'Password updated successfully.')
+                return redirect('change_password')
+            else:
+                messages.error(request, 'Please enter valid current password')
+                return redirect('change_password')
+        else:
+            messages.error(request, 'Password does not match!')
+            return redirect('change_password')
+    return render(request, 'accounts/change_password.html')
+
+
+@login_required(login_url='login')
+def order_detail(request, order_id):
+    order_detail = OrderProduct.objects.filter(order__order_number=order_id)
+    order = Order.objects.get(order_number=order_id)
+    subtotal = 0
+    for i in order_detail:
+        subtotal += i.product_price * i.quantity
+
+    context = {
+        'order_detail': order_detail,
+        'order': order,
+        'subtotal': subtotal,
+    }
+    return render(request, 'accounts/order_detail.html', context)

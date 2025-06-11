@@ -1,0 +1,14 @@
+{% autoescape off %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Thank You for Your Order</title>
+</head>
+<body>
+    <h2>Hello {{ user.first_name }},</h2>
+    <p>Thank you for your order (Order No: {{ order.order_number }}).</p>
+    <p>We are processing your order and will notify you once it is shipped.</p>
+</body>
+</html>
+
+{% endautoescape %}
