@@ -146,7 +146,14 @@ def activate(request, uidb64, token):
 
 @login_required(login_url='login')
 def dashboard(request):
-    return render(request,'accounts/dashboard.html')
+    userprofile = UserProfile.objects.get(user=request.user)
+    orders = Order.objects.filter(user=request.user, is_ordered=True)
+    orders_count = orders.count()
+    context = {
+        'orders_count': orders_count,
+        'userprofile': userprofile,
+    }
+    return render(request, 'accounts/dashboard.html', context)
 
 def forgotPassword(request):
     if request.method == 'POST':
@@ -196,9 +203,12 @@ def my_order(request):
     return render(request, 'accounts/my_order.html', context)
 
 
+from .models import UserProfile
+
 @login_required(login_url='login')
 def edit_profile(request):
-    userprofile = get_object_or_404(UserProfile, user=request.user)
+    userprofile, created = UserProfile.objects.get_or_create(user=request.user)
+
     if request.method == 'POST':
         user_form = UserForm(request.POST, instance=request.user)
         profile_form = UserProfileForm(request.POST, request.FILES, instance=userprofile)
@@ -210,12 +220,13 @@ def edit_profile(request):
     else:
         user_form = UserForm(instance=request.user)
         profile_form = UserProfileForm(instance=userprofile)
+
     context = {
         'user_form': user_form,
         'profile_form': profile_form,
-        'userprofile': userprofile,
     }
     return render(request, 'accounts/edit_profile.html', context)
+
 
 
 @login_required(login_url='login')
